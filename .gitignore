@@ -1,0 +1,17 @@
+/bin
+
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+bhojpur.iml
+
+ledger_cli
+ledger-cli
+
+test/tmp/
+
+my save path/
+
+profile.out

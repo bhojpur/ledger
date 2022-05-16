@@ -1,0 +1,37 @@
+FROM golang:1.18.2-alpine AS builder
+
+RUN apk update
+RUN apk upgrade
+RUN apk add --update gcc g++ make git
+
+ENV GOPATH /go
+WORKDIR /go/src/github.com/bhojpur/ledger
+ADD . .
+
+# TODO: pull app version from VERSION
+RUN make
+
+FROM alpine
+
+# netcat is needed by wait-for
+RUN apk add net-tools
+
+WORKDIR /app
+
+# Add docker-compose-wait tool -------------------
+ENV WAIT_VERSION 2.7.2
+ADD https://github.com/ufoscout/docker-compose-wait/releases/download/$WAIT_VERSION/wait ./wait
+RUN chmod +x ./wait
+
+# wait needs a wrapper to help invoke it from a docker entrypoint
+COPY utils/wait_entrypoint.sh .
+RUN chmod +x ./wait_entrypoint.sh
+
+ENV PATH=/app:${PATH}
+ENV LEDGER_LOG_LEVEL info
+ENV LEDGER_DATA_DIR ~/.bhojpur
+ENV LEDGER_CONFIG_FILE ~/.bhojpur/config.docker.toml
+COPY --from=builder /go/src/github.com/bhojpur/ledger/build/bin/native/* ./
+
+EXPOSE 50051
+ENTRYPOINT ./ledgersvr --verbosity=${LEDGER_LOG_LEVEL} --rpc-host=0.0.0.0 --rpc-port=50051 --datadir=${LEDGER_DATA_DIR} --config=${LEDGER_CONFIG_FILE}

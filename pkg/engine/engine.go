@@ -1,0 +1,285 @@
+package ledger
+
+// Copyright (c) 2018 Bhojpur Consulting Private Limited, India. All rights reserved.
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+import (
+	"path"
+	"strings"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
+
+	cmd "github.com/bhojpur/ledger/cmd/server"
+	"github.com/bhojpur/ledger/pkg/core"
+	"github.com/bhojpur/ledger/pkg/db"
+	"github.com/bhojpur/ledger/pkg/db/mysqldb"
+	"github.com/bhojpur/ledger/pkg/db/sqlite3db"
+
+	"github.com/rs/xid"
+)
+
+const ledgerDBName = "ledgerdata"
+
+var log = logrus.WithField("prefix", "ledger")
+
+type Ledger struct {
+	LedgerDb db.Database
+	Config   *cmd.LedgerConfig
+}
+
+func New(ctx *cli.Context, cfg *cmd.LedgerConfig) (*Ledger, error) {
+
+	ledger := &Ledger{
+		Config: cfg,
+	}
+
+	switch strings.ToLower(cfg.DatabaseType) {
+	case "sqlite3", "memorydb":
+
+		log.Debug("Using Sqlite3")
+		mode := "rwc"
+		dbPath := path.Join(cfg.DataDirectory, ledgerDBName)
+		if strings.ToLower(cfg.DatabaseType) == "memorydb" {
+			log.Debug("In Memory only Mode")
+			mode = "memory"
+		}
+		log.WithField("path", dbPath).Debug("Checking database path")
+		if ctx.Bool(cmd.ClearDB.Name) {
+			log.Info("Clearing SQLite3 DB")
+			if err := sqlite3db.ClearDB(dbPath); err != nil {
+				return nil, err
+			}
+		}
+		ledgerdb, err := sqlite3db.NewDB(dbPath, mode)
+		ledger.LedgerDb = ledgerdb
+		if err != nil {
+			return nil, err
+		}
+	case "mysql":
+		log.Debug("Using MySQL")
+		ledgerdb, err := mysqldb.NewDB(cfg.DatabaseLocation)
+		if ctx.Bool(cmd.ClearDB.Name) {
+			log.Info("Clearing MySQL DB")
+			if err := ledgerdb.ClearDB(); err != nil {
+				return nil, err
+			}
+		}
+		ledger.LedgerDb = ledgerdb
+		if err != nil {
+			return nil, err
+		}
+	default:
+		log.Fatal("No implementation available for that database.")
+	}
+
+	log.Debug("Initialised database configuration")
+
+	return ledger, nil
+}
+
+func (l *Ledger) Insert(txn *core.Transaction) (string, error) {
+	log.WithField("transaction", txn).Debug("Created Transaction")
+	l.LedgerDb.SafeAddUser(txn.Poster)
+	currencies, _ := l.GetCurrencies(txn)
+	for _, currency := range currencies {
+		l.LedgerDb.SafeAddCurrency(currency)
+	}
+	accounts, _ := l.GetAccounts(txn)
+
+	for _, account := range accounts {
+		newaccount, err := l.LedgerDb.SafeAddAccount(account)
+		if err != nil {
+			return "", err
+		}
+		if newaccount {
+			l.LedgerDb.SafeAddTagToAccount(account.Name, "main")
+		}
+	}
+
+	response, err := l.LedgerDb.AddTransaction(txn)
+	if err != nil {
+		return "", err
+	}
+
+	return response, nil
+}
+
+func (l *Ledger) Delete(txnID string) {
+	l.LedgerDb.DeleteTransaction(txnID)
+}
+
+func (l *Ledger) Void(txnID string, usr *core.User) error {
+	txn, err := l.LedgerDb.FindTransaction(txnID)
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("Transaction Found to Void: %+v", txn)
+
+	newTxn, err := core.ReverseTransaction(txn, usr)
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("Reversed Transaction: %+v", newTxn)
+
+	newJournalID, err := l.Insert(newTxn)
+	if err != nil {
+		return err
+	}
+	log.Debug("Successful insert of reversing transaction")
+
+	err = l.LedgerDb.SafeAddTagToTransaction(newJournalID, "Void")
+	if err != nil {
+		return err
+	}
+	log.Debug("New Transaction Tagged Void")
+
+	err = l.LedgerDb.SafeAddTagToTransaction(txnID, "Void")
+	if err != nil {
+		return err
+	}
+	log.Debug("Original Transaction Tagged Void")
+
+	return nil
+}
+
+func (l *Ledger) InsertTag(account, tag string) error {
+	return l.LedgerDb.SafeAddTagToAccount(account, tag)
+}
+
+func (l *Ledger) DeleteTag(account, tag string) error {
+	return l.LedgerDb.DeleteTagFromAccount(account, tag)
+}
+
+func (l *Ledger) InsertAccount(accountStr string) error {
+	acc, err := core.NewAccount(accountStr, accountStr)
+	if err != nil {
+		log.Error(err)
+	}
+	_, err = l.LedgerDb.SafeAddAccount(acc)
+	return err
+}
+
+func (l *Ledger) DeleteAccount(accountStr string) error {
+	return l.LedgerDb.DeleteAccount(accountStr)
+}
+
+func (l *Ledger) GetCurrencies(txn *core.Transaction) ([]*core.Currency, error) {
+
+	currencies := []*core.Currency{}
+
+	for _, split := range txn.Splits {
+		cur := split.Currency
+		exists := false
+
+		for _, b := range currencies {
+			if b == cur {
+				exists = true
+			}
+		}
+
+		if !exists {
+			currencies = append(currencies, cur)
+		}
+
+	}
+
+	return currencies, nil
+}
+
+func (l *Ledger) InsertCurrency(curr *core.Currency) error {
+	return l.LedgerDb.SafeAddCurrency(curr)
+}
+
+func (l *Ledger) DeleteCurrency(currency string) error {
+	return l.LedgerDb.DeleteCurrency(currency)
+}
+
+func (l *Ledger) GetDefaultCurrency() *core.Currency {
+	return &core.Currency{Name: "INR", Decimals: 2}
+}
+
+func (l *Ledger) GetCurrency(currency string) (*core.Currency, error) {
+	curr := l.GetDefaultCurrency()
+	var err error
+	if len(currency) > 0 {
+		curr, err = l.LedgerDb.FindCurrency(currency)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return curr, nil
+}
+
+func (l *Ledger) GetAccounts(txn *core.Transaction) ([]*core.Account, error) {
+	accounts := []*core.Account{}
+
+	for _, split := range txn.Splits {
+		accs := split.Accounts
+
+		for _, a := range accs {
+			exists := false
+			for _, b := range accounts {
+				if b == a {
+					exists = true
+				}
+			}
+			if !exists {
+				accounts = append(accounts, a)
+			}
+		}
+
+	}
+
+	return accounts, nil
+}
+
+func (l *Ledger) ReconcileTransactions(splitIDs []string) (string, error) {
+
+	//TODO sean loop here to check that splits exist
+	//for _, splitID := range splitIDs {
+	//}
+	guid := xid.New()
+	return l.LedgerDb.ReconcileTransactions(guid.String(), splitIDs)
+}
+
+func (l *Ledger) GetTB(date time.Time) (*[]core.TBAccount, error) {
+	return l.LedgerDb.GetTB(date)
+}
+
+func (l *Ledger) GetListing(enddate, startdate time.Time) (*[]core.Transaction, error) {
+	return l.LedgerDb.GetListing(enddate, startdate)
+}
+
+func (l *Ledger) Start() {
+	l.LedgerDb.InitDB()
+}
+
+func (l *Ledger) Stop() error {
+	err := l.LedgerDb.Close()
+	return err
+}
+
+func (l *Ledger) Status() error {
+	return nil
+}

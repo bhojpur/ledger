@@ -1,0 +1,100 @@
+project_name: ledger
+before:
+  hooks:
+    - go mod tidy
+dist: release
+source:
+  enabled: true
+  name_template: '{{ .ProjectName }}-{{ .Tag }}-source'
+checksum:
+  name_template: '{{ .ProjectName }}-{{ .Tag }}-checksums.txt'
+builds:
+- id: ledgerctl
+  env:
+  - CGO_ENABLED=0
+  main: ./cmd/client/main.go
+  binary: ledgerctl
+  ldflags:
+  - -s -w
+  - -X "github.com/bhojpur/ledger/pkg/version.Version={{.Version}}-{{.ShortCommit}}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildTime={{ time "2006-01-02 15:04:05 MST" }}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildCommit={{ .FullCommit }}"
+- id: ledgerepo
+  env:
+  - CGO_ENABLED=0
+  main: ./cmd/reporter/main.go
+  binary: ledgerepo
+  ldflags:
+  - -s -w
+  - -X "github.com/bhojpur/ledger/pkg/version.Version={{.Version}}-{{.ShortCommit}}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildTime={{ time "2006-01-02 15:04:05 MST" }}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildCommit={{ .FullCommit }}"
+- id: ledgersvr
+  env:
+  - CGO_ENABLED=0
+  main: ./server.go
+  binary: ledgersvr
+  ldflags:
+  - -s -w
+  - -X "github.com/bhojpur/ledger/pkg/version.Version={{.Version}}-{{.ShortCommit}}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildTime={{ time "2006-01-02 15:04:05 MST" }}"
+  - -X "github.com/bhojpur/ledger/pkg/version.BuildCommit={{ .FullCommit }}"
+archives:
+- id: ledgerctl
+  files:
+  - "none*"
+  format: binary # this removes the tar of the archives, leaving the binaries alone
+  name_template: ledgerctl-{{ .Tag }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+  replacements:
+    darwin: Darwin
+    linux: Linux
+    386: i386
+    amd64: x86_64
+  builds:
+  - ledgerctl
+- id: ledgerepo
+  files:
+  - "none*"
+  format: binary # this removes the tar of the archives, leaving the binaries alone
+  name_template: ledgerctl-{{ .Tag }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+  replacements:
+    darwin: Darwin
+    linux: Linux
+    386: i386
+    amd64: x86_64
+  builds:
+  - ledgerepo
+- id: ledgersvr
+  files:
+  - "none*"
+  format: binary # this removes the tar of the archives, leaving the binaries alone
+  name_template: ledgersvr-{{ .Tag }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+  builds:
+  - ledgersvr
+  replacements:
+    darwin: Darwin
+    linux: Linux
+    386: i386
+    amd64: x86_64
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
+release:
+  prerelease: auto
+  header: |
+    Bhojpur Ledger is a double entry financial accounting system driving many web scale applications
+    and services running over the Bhojpur.NET Platform.
+dockers:
+  - goos: linux
+    goarch: amd64
+    goarm: ''
+    dockerfile: Dockerfile
+    image_templates:
+    - "ghcr.io/bhojpur/ledger:{{ .Tag }}"
+    extra_files:
+    - README.md
