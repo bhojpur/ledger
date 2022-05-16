@@ -171,13 +171,13 @@ requires Nodejs on the machine and also handlebars (npm install -g handlebars) a
 		cmd.Run()
 
 		//Restructure and Cleanup
-		err = os.Rename("src/mypdf.pdf", ctx.String("template")+".pdf")
+		err = os.Rename("./src/mypdf.pdf", ctx.String("template")+".pdf")
 		if err != nil {
 			return fmt.Errorf("renaming file failed (%v)", err)
 		}
 		err = os.RemoveAll("src")
 		if err != nil {
-			return fmt.Errorf("removing src folder failed (%v)", err)
+			return fmt.Errorf("removing ./src folder failed (%v)", err)
 		}
 
 		return nil

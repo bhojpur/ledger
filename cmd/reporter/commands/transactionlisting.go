@@ -144,7 +144,7 @@ If you want to see all the transactions in the database, or export to CSV/JSON
 				t.Amount = fmt.Sprintf("%.2f", centsAmount/math.Pow(10, decimals))
 			} else {
 				p := message.NewPrinter(language.English)
-				t.Amount = p.Sprintf("$%.2f", centsAmount/math.Pow(10, decimals))
+				t.Amount = p.Sprintf("₹%.2f", centsAmount/math.Pow(10, decimals))
 			}
 			output.Data = append(output.Data, t)
 			table.Append([]string{t.Date, t.ID, t.Account, t.Description, t.Currency, t.Amount})

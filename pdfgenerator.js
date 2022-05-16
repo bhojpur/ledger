@@ -77,7 +77,7 @@ function creditCommaFormat(number) {
 
     await page.emulateMedia('screen');
     await page.pdf({
-      path: 'mypdf.pdf',
+      path: './mypdf.pdf',
       format: 'a4',
       printBackground: true
     });

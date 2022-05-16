@@ -124,7 +124,7 @@ If you want to see all the transactions in the database, or export to CSV
 				t.Amount = fmt.Sprintf("%.2f", centsAmount/math.Pow(10, decimals))
 			} else {
 				p := message.NewPrinter(language.English)
-				t.Amount = p.Sprintf("$%.2f", centsAmount/math.Pow(10, decimals))
+				t.Amount = p.Sprintf("₹%.2f", centsAmount/math.Pow(10, decimals))
 			}
 			tboutput.Data = append(tboutput.Data, t)
 			table.Append([]string{t.Account, t.Amount})
